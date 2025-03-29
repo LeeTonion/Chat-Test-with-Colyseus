@@ -4,6 +4,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using System;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 public class ChatManager : MonoBehaviour
 {
@@ -38,6 +39,7 @@ public class ChatManager : MonoBehaviour
     private async void OnSendButtonClicked()
     {
         string message = chatInput.text.Trim();
+        
         if (!string.IsNullOrWhiteSpace(message))
         {
             await networkClient.SendChatMessage(message);
@@ -54,7 +56,7 @@ public class ChatManager : MonoBehaviour
         TextMeshProUGUI messageText = newMessageObj.transform.GetChild(0).GetComponent<TextMeshProUGUI>();
         TextMeshProUGUI NameText = newMessageObj.transform.GetChild(1).GetComponent<TextMeshProUGUI>();
 
-        messageText.text = $"{message}               ({timeStamp})";
+        messageText.text = $"{message}";
              
         NameText.text = $"{sender} :";
 
@@ -100,4 +102,5 @@ public class ChatManager : MonoBehaviour
         networkClient.OnChatMessageReceived -= OnChatMessageReceived;
         networkClient.OnConnectionStatusChanged -= OnConnectionStatusChanged;
     }
+   
 }

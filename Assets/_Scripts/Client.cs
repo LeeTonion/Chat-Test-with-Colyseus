@@ -7,7 +7,7 @@ public class Client : MonoBehaviour
 {
     [Header("Connection Settings")]
     [SerializeField] private string serverUrl = "ws://192.168.1.135:2567"; // Đã đúng IP
-    [SerializeField] private string roomName = "my_room";
+    [SerializeField] private string roomName = "chat_room";
 
     private ColyseusClient client;
     private ColyseusRoom<MyRoomState> room;
@@ -157,4 +157,5 @@ public class Client : MonoBehaviour
             Debug.LogError($"Failed to create room: {e.Message}");
         }
     }
+
 }
