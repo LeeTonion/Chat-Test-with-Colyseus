@@ -1154,6 +1154,7 @@ MonoBehaviour:
   toggleChatButton: {fileID: 124872909}
   messageCountText: {fileID: 1222199834}
   chatPanel: {fileID: 1647827057}
+  networkClient: {fileID: 1279168571}
 --- !u!1 &1027048037
 GameObject:
   m_ObjectHideFlags: 0
@@ -1712,7 +1713,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a5d318df06c2ccf44a768f25d835b213, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  serverUrl: ws://localhost:2567
+  serverUrl: ws://192.168.1.126:2567
   roomName: my_room
 --- !u!4 &1279168572
 Transform:
