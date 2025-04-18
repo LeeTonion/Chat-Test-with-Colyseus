@@ -4,11 +4,12 @@ using UnityEngine.UI;
 
 public class GifButton : MonoBehaviour
 {
+    public TextMeshProUGUI gifText;
     private void Start()
     {
         gameObject.GetComponent<Button>().onClick.AddListener(() => {
-            ChatManager.Instance.OnGifButtonClicked(gameObject.transform.GetChild(0).GetComponent<TextMeshProUGUI>().text);
+            //ChatUIManager.Instance.OnGifButtonClicked(gifText.text);
         });
-         ;
+         
     }
 }

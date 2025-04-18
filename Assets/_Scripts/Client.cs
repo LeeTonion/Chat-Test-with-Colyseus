@@ -2,15 +2,20 @@
 using Colyseus;
 using System.Threading.Tasks;
 using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
-public class Client : MonoBehaviour
+public class Client : MonoBehaviour 
 {
     [Header("Connection Settings")]
-    [SerializeField] private string serverUrl = "ws://192.168.1.135:2567"; // Đã đúng IP
-    [SerializeField] private string roomName = "chat_room";
+    [SerializeField] private string serverUrl = "ws://192.168.1.131:2567";
+    [SerializeField] private string roomName = "level_room";
+
+    [Header("UI")]
+    [SerializeField] private ChatUIManager chatUIManager;
 
     private ColyseusClient client;
-    private ColyseusRoom<MyRoomState> room;
+    private ColyseusRoom<LevelState> levelRoom;
     private bool isConnected = false;
 
     public event Action<string, string> OnChatMessageReceived;
@@ -27,18 +32,15 @@ public class Client : MonoBehaviour
     {
         try
         {
-            // Kiểm tra URL hợp lệ trước khi khởi tạo
             if (string.IsNullOrEmpty(serverUrl) || !serverUrl.StartsWith("ws://"))
-            {
                 throw new Exception("Invalid WebSocket URL");
-            }
 
             client = new ColyseusClient(serverUrl);
-            Debug.Log($"Colyseus client initialized with URL: {serverUrl}");
+            Debug.Log($"Colyseus client initialized: {serverUrl}");
         }
         catch (Exception e)
         {
-            Debug.LogError($"Failed to initialize client: {e.Message}");
+            Debug.LogError($"Init failed: {e.Message}");
         }
     }
 
@@ -52,110 +54,117 @@ public class Client : MonoBehaviour
 
         try
         {
-            room = await client.Join<MyRoomState>(roomName);
+            levelRoom = await client.Join<LevelState>(roomName);
             SetupRoomListeners();
             isConnected = true;
             OnConnectionStatusChanged?.Invoke(true);
-            Debug.Log($"Successfully joined room: {roomName} at {serverUrl}");
+            Debug.Log("Joined room successfully");
             return true;
         }
         catch (Exception e)
         {
-            Debug.LogError($"Failed to join room: {e.Message}");
+            Debug.LogError($"Join failed: {e.Message}");
             isConnected = false;
             OnConnectionStatusChanged?.Invoke(false);
             return false;
         }
     }
 
-    private void SetupRoomListeners()
+    public void SetupRoomListeners()
     {
-        if (room == null) return;
+        if (levelRoom == null) return;
 
-        room.OnMessage<ChatMessage>("chat", (chatMessage) =>
+        levelRoom.OnMessage<LevelState>("initData", (data) =>
+        {
+            Debug.Log("Level: " + data.levelName);
+            chatUIManager.SetMessages(data.messages, data.levelName);
+        });
+        levelRoom.OnMessage<Message>("newMessage", (newMsg) =>
+        {
+            chatUIManager.AddNewMessage(newMsg);
+        });
+
+        levelRoom.OnMessage<Message>("messageUpdated", (updatedMsg) =>
+        {
+            chatUIManager.UpdateMessage(updatedMsg);
+        });
+        levelRoom.OnMessage<ChatMessage>("chat", (chatMessage) =>
         {
             string sender = chatMessage.sender ?? "Unknown";
             OnChatMessageReceived?.Invoke(sender, chatMessage.message);
         });
 
-        room.OnMessage<string>("welcomeMessage", (message) =>
+        levelRoom.OnMessage<string>("welcomeMessage", (message) =>
         {
             OnWelcomeMessageReceived?.Invoke(message);
         });
 
-        room.OnLeave += (code) =>
+        levelRoom.OnLeave += (code) =>
         {
             isConnected = false;
             OnConnectionStatusChanged?.Invoke(false);
-            Debug.Log($"Disconnected from room with code: {code}");
+            Debug.Log($"Disconnected from room. Code: {code}");
         };
+
     }
 
-    public async Task SendChatMessage(string message)
+    public async Task SendChatMessage(string messageContent , string parentId = null)
     {
-        if (!isConnected || room == null)
+        if (!isConnected || levelRoom == null)
         {
-            Debug.LogWarning("Cannot send message: Not connected to room");
+            Debug.LogWarning("Not connected to room.");
+            return;
+        }
+
+        Message chat = new Message
+        {
+            
+            content = messageContent,
+            votes = 0,
+            parentId = parentId 
+        };
+
+        try
+        {
+            await levelRoom.Send("sendMessage", chat);
+            levelRoom.OnMessage<LevelState>("initData", (data) =>
+            {
+                Debug.Log("Level: " + data.levelName);
+                chatUIManager.SetMessages(data.messages, data.levelName);
+            });
+            Debug.Log("Message sent.");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Send failed: {e.Message}");
+        }
+    }
+
+
+    public async Task SendVote(string messageId, bool isUpvote)
+    {
+        if (!isConnected || levelRoom == null)
+        {
+            Debug.LogWarning("Not connected to room.");
             return;
         }
 
         try
         {
-            if (!string.IsNullOrEmpty(message))
-            {
-                await room.Send("chat", message);
-                Debug.Log($"Message sent: {message}");
-            }
+            var voteData = new Dictionary<string, object>
+        {
+            { "id", messageId },
+            { "isUpvote", isUpvote } 
+        };
+
+            await levelRoom.Send("vote", voteData);
+            Debug.Log($"VOTE sent: {(isUpvote ? "UP" : "DOWN")} for message ID: {messageId}");
         }
         catch (Exception e)
         {
-            Debug.LogError($"Failed to send message: {e.Message}");
-        }
-    }
-
-    private async void OnDestroy()
-    {
-        if (room != null && isConnected)
-        {
-            try
-            {
-                await room.Leave();
-                Debug.Log("Room left successfully");
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"Error leaving room: {e.Message}");
-            }
-        }
-    }
-
-    public async void CreateRoom()
-    {
-        if (client == null)
-        {
-            Debug.LogError("Client not initialized");
-            return;
-        }
-
-        try
-        {
-            room = await client.Create<MyRoomState>("my_room");
-            Debug.Log($"Room created successfully at {serverUrl}");
-
-            room.OnMessage<ChatMessage>("chat", (chatMessage) =>
-            {
-                Debug.Log($"[{chatMessage.sender}]: {chatMessage.message}");
-            });
-
-            room.OnMessage<string>("welcomeMessage", (message) =>
-            {
-                Debug.Log(message);
-            });
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"Failed to create room: {e.Message}");
+            Debug.LogError($"SendVote failed: {e.Message}");
         }
     }
 
 }
+

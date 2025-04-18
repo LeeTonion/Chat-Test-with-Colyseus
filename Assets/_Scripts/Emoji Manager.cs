@@ -14,7 +14,8 @@ public class EmojiManager : MonoBehaviour
     [SerializeField] private new List<Button> ButtonItemList = new List<Button>();
     [SerializeField] private GameObject IconAndGif;
     private string EmojiPath = "Icon"; 
-    private string GifPath = "Gif"; 
+    private string GifPath = "Gif";
+    [SerializeField] private TMP_InputField inputField;
     private TMP_SpriteAsset[] spriteAssetsEmoji; 
     private TMP_SpriteAsset[] spriteAssetsGif; 
     public static EmojiManager Instance { get; private set; }
@@ -60,7 +61,7 @@ public class EmojiManager : MonoBehaviour
             int spriteCount = spriteAssetsGif[i].spriteCharacterTable.Count;
             if (spriteCount > 1)
             {
-                emojiText.text = $"<sprite=\"{spriteAssetsGif[i].name}\" anim=\"0,{spriteCount - 1},50\">";
+                emojiText.text = $"<sprite=\"{spriteAssetsGif[i].name}\" anim=\"0,{spriteCount - 1},50\"> \n\n\n\n\n.\n";
             }
             else
             {
@@ -70,15 +71,25 @@ public class EmojiManager : MonoBehaviour
     }
     public void EmojiButton()
     {
+        ShowIconAndGifButton();
         InteractableButton(ButtonItemList[0]);
         contentEmoji.transform.parent.parent.gameObject.SetActive(true);
         contentGif.transform.parent.parent.gameObject.SetActive(false);
     }
     public void GifButton()
     {
+        ShowIconAndGifButton();
         InteractableButton(ButtonItemList[1]);
         contentEmoji.transform.parent.parent.gameObject.SetActive(false);
         contentGif.transform.parent.parent.gameObject.SetActive(true);
+    }
+    public void KeyboardButton()
+    {
+        InteractableButton(ButtonItemList[2]);
+        contentEmoji.transform.parent.parent.gameObject.SetActive(false);
+        contentGif.transform.parent.parent.gameObject.SetActive(false);
+        inputField.ActivateInputField();
+        HideIconAndGifButton();
     }
     public void IconAndGifButton()
     {
