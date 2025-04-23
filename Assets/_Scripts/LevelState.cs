@@ -1,28 +1,68 @@
-using System.Collections.Generic;
-using Colyseus.Schema;
+﻿using Colyseus.Schema;
 
-public class Message : Schema
+public class AccountSchema : Schema
 {
-    public string id = "";
 
-    public string sender = "";
-
-    public string content = "";
-
-    public long timestamp = 0;
-
-    public string parentId = "";
-
-    public int votes = 0;
+    public long id = 0;
 
 
-    public List<Message> replies = new List<Message>();
+    public string name = "";
+
+
+    public string thumbnail = "";
 }
 
-public class LevelState : Schema
+public class ParentCommentSchema : Schema
 {
-    public string levelName = "";
 
-    public Dictionary<string, Message> messages = new();
+    public long id = 0;
 
+    public string detail = "";
+
+
+    public AccountSchema account = new AccountSchema();
+}
+
+public class CommentSchema : Schema
+{
+
+    public long id = 0;
+
+
+    public long accountId = 0;
+
+    public string relationType = "";
+
+
+    public long relationId = 0;
+
+
+    public long parentId = 0;
+
+
+    public string detail = "";
+
+    public int replies = 0;
+
+
+    public int likes = 0;
+
+    public int dislikes = 0;
+
+    public long createdAt = 0;
+
+
+    public long updatedAt = 0;
+
+
+    public AccountSchema account = new AccountSchema();
+
+
+    public ParentCommentSchema parent = new ParentCommentSchema();
+}
+
+public class MyRoomState : Schema
+{
+
+    public ArraySchema<CommentSchema> comments = new ArraySchema<CommentSchema>();
 }

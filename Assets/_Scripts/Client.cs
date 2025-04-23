@@ -1,29 +1,30 @@
-﻿using UnityEngine;
-using Colyseus;
+﻿using System.Collections.Generic;
 using System.Threading.Tasks;
+using UnityEngine;
+using Colyseus;
 using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
+using System.Linq;
+using Colyseus.Schema;
 
-public class Client : MonoBehaviour 
+public class Client : MonoBehaviour
 {
-    [Header("Connection Settings")]
     [SerializeField] private string serverUrl = "ws://192.168.1.131:2567";
-    [SerializeField] private string roomName = "level_room";
+    [SerializeField] private string roomID = "";
+    [SerializeField] public long id;
+    [SerializeField] public string name;
+    [SerializeField] public string thumbnail;
+    [SerializeField] private string levelId = "278";
+    [SerializeField] public string level = "1";
 
-    [Header("UI")]
+    [SerializeField] private JWTGenerator JWTGenerator;
     [SerializeField] private ChatUIManager chatUIManager;
-
     private ColyseusClient client;
-    private ColyseusRoom<LevelState> levelRoom;
-    private bool isConnected = false;
-
-    public event Action<string, string> OnChatMessageReceived;
-    public event Action<string> OnWelcomeMessageReceived;
-    public event Action<bool> OnConnectionStatusChanged;
+    private ColyseusRoom<MyRoomState> room;
+    private string jwtToken;
 
     private async void Start()
     {
+        jwtToken = JWTGenerator.CreateJWT(id, name, thumbnail, "mTn8MCSFLSAe1DwyTPrnIR7gk7tslm71");
         await InitializeClient();
         await JoinRoom();
     }
@@ -33,14 +34,14 @@ public class Client : MonoBehaviour
         try
         {
             if (string.IsNullOrEmpty(serverUrl) || !serverUrl.StartsWith("ws://"))
-                throw new Exception("Invalid WebSocket URL");
+                throw new Exception("Server URL không hợp lệ.");
 
             client = new ColyseusClient(serverUrl);
-            Debug.Log($"Colyseus client initialized: {serverUrl}");
+            Debug.Log("✅ Khởi tạo ColyseusClient thành công.");
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Debug.LogError($"Init failed: {e.Message}");
+            Debug.LogError("❌ Lỗi khởi tạo ColyseusClient: " + ex.Message);
         }
     }
 
@@ -48,123 +49,141 @@ public class Client : MonoBehaviour
     {
         if (client == null)
         {
-            Debug.LogError("Client not initialized");
+            Debug.LogError("⚠️ Client chưa được khởi tạo.");
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(roomID) || string.IsNullOrEmpty(jwtToken))
+        {
+            Debug.LogError("⚠️ roomID hoặc jwtToken không hợp lệ.");
             return false;
         }
 
         try
         {
-            levelRoom = await client.Join<LevelState>(roomName);
-            SetupRoomListeners();
-            isConnected = true;
-            OnConnectionStatusChanged?.Invoke(true);
-            Debug.Log("Joined room successfully");
+            var options = new Dictionary<string, object>
+            {
+                { "level", level },
+                { "levelId", levelId }
+            };
+            var headers = new Dictionary<string, string>
+            {
+                { "Authorization", "Bearer " + jwtToken }
+            };
+
+            room = await client.JoinById<MyRoomState>(roomID, options, headers);
+            if (room == null)
+            {
+                Debug.LogError("❌ Phòng trả về null sau khi tham gia.");
+                return false;
+            }
+
+            Debug.Log("✅ Đã tham gia phòng thành công: " + roomID);
+
+            room.Send("getCommentsData");
+            room.OnMessage<CommentSchema[]>("commentsData", (comments) =>
+            {
+                Debug.Log("Nhận comments từ server:");
+
+                foreach (var comment in comments)
+                {
+                    chatUIManager.AddComment(comment, level);
+                }
+
+            });
+
             return true;
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Debug.LogError($"Join failed: {e.Message}");
-            isConnected = false;
-            OnConnectionStatusChanged?.Invoke(false);
+            Debug.LogError($"❌ Tham gia phòng thất bại (roomID: {roomID}): {ex.Message}");
             return false;
         }
     }
 
-    public void SetupRoomListeners()
+
+    public async Task SendChatMessage(string detail, long parentId = 0)
     {
-        if (levelRoom == null) return;
-
-        levelRoom.OnMessage<LevelState>("initData", (data) =>
+        if (room == null)
         {
-            Debug.Log("Level: " + data.levelName);
-            chatUIManager.SetMessages(data.messages, data.levelName);
-        });
-        levelRoom.OnMessage<Message>("newMessage", (newMsg) =>
-        {
-            chatUIManager.AddNewMessage(newMsg);
-        });
-
-        levelRoom.OnMessage<Message>("messageUpdated", (updatedMsg) =>
-        {
-            chatUIManager.UpdateMessage(updatedMsg);
-        });
-        levelRoom.OnMessage<ChatMessage>("chat", (chatMessage) =>
-        {
-            string sender = chatMessage.sender ?? "Unknown";
-            OnChatMessageReceived?.Invoke(sender, chatMessage.message);
-        });
-
-        levelRoom.OnMessage<string>("welcomeMessage", (message) =>
-        {
-            OnWelcomeMessageReceived?.Invoke(message);
-        });
-
-        levelRoom.OnLeave += (code) =>
-        {
-            isConnected = false;
-            OnConnectionStatusChanged?.Invoke(false);
-            Debug.Log($"Disconnected from room. Code: {code}");
-        };
-
-    }
-
-    public async Task SendChatMessage(string messageContent , string parentId = null)
-    {
-        if (!isConnected || levelRoom == null)
-        {
-            Debug.LogWarning("Not connected to room.");
+            Debug.LogWarning("Chưa kết nối tới phòng.");
             return;
         }
 
-        Message chat = new Message
+        if (string.IsNullOrEmpty(detail))
         {
-            
-            content = messageContent,
-            votes = 0,
-            parentId = parentId 
+            Debug.LogWarning("Nội dung bình luận rỗng.");
+            return;
+        }
+
+        var message = new Dictionary<string, object>
+        {
+            { "type", "comment" },
+            { "detail", detail }
         };
+
+        if (parentId != 0)
+        {
+            message["parentId"] = parentId;
+        }
 
         try
         {
-            await levelRoom.Send("sendMessage", chat);
-            levelRoom.OnMessage<LevelState>("initData", (data) =>
+            await room.Send("message", message);
+            room.Send("getCommentsData");
+            room.OnMessage<CommentSchema[]>("commentsData", (comments) =>
             {
-                Debug.Log("Level: " + data.levelName);
-                chatUIManager.SetMessages(data.messages, data.levelName);
+                Debug.Log("Nhận comments từ server:");
+
+                foreach (var comment in comments)
+                {
+                    chatUIManager.AddComment(comment, level);
+                }
+
             });
-            Debug.Log("Message sent.");
+            Debug.Log($"✅ Gửi bình luận: detail={detail}, parentId={parentId}, accountId={id}");
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Debug.LogError($"Send failed: {e.Message}");
+            Debug.LogError($"❌ Lỗi khi gửi bình luận: {ex.Message}");
         }
     }
-
-
-    public async Task SendVote(string messageId, bool isUpvote)
+    public async Task SendVote(long commentId, string voteType)
     {
-        if (!isConnected || levelRoom == null)
+        if ( room == null)
         {
-            Debug.LogWarning("Not connected to room.");
+            Debug.LogWarning("Chưa kết nối.");
             return;
         }
 
-        try
+        if (commentId == 0 || !new[] { "like", "dislike", "unlike", "undislike" }.Contains(voteType))
         {
-            var voteData = new Dictionary<string, object>
+            Debug.LogWarning("Tham số vote không hợp lệ.");
+            return;
+        }
+
+        var message = new Dictionary<string, object>
         {
-            { "id", messageId },
-            { "isUpvote", isUpvote } 
+            { "type", voteType },
+            { "id", commentId }
         };
 
-            await levelRoom.Send("vote", voteData);
-            Debug.Log($"VOTE sent: {(isUpvote ? "UP" : "DOWN")} for message ID: {messageId}");
-        }
-        catch (Exception e)
+        try
         {
-            Debug.LogError($"SendVote failed: {e.Message}");
+            await room.Send("message", message);
+            Debug.Log($"✅ Gửi vote '{voteType}' cho bình luận: {commentId}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"❌ Lỗi khi gửi vote: {ex.Message}");
         }
     }
-
+    private void OnDestroy()
+    {
+        if (room != null)
+        {
+            room.Leave();
+            room = null;
+        }
+    }
 }
-

@@ -1,336 +1,186 @@
-﻿
-using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
+﻿using UnityEngine;
 using System.Collections.Generic;
+using TMPro;
+using UnityEngine.UI;
+using System;
 
 public class ChatUIManager : MonoBehaviour
 {
-    [Header("UI References")]
-    [SerializeField] private Transform messageContainer;
-    [SerializeField] private GameObject messageItemPrefab;
-    [SerializeField] private GameObject relayMessageItemPrefab;
-    [SerializeField] private TextMeshProUGUI levelText;
-    [SerializeField] public TMP_InputField chatInputField;
-    [SerializeField] private Button sendMessageButton;
-    [SerializeField] private GameObject FormReply;
-    [SerializeField] private TextMeshProUGUI Comment;
-    [Header("Network")]
+    [SerializeField] private Transform commentContainer;
+    [SerializeField] private GameObject commentPrefab;
+    [SerializeField] private TMP_InputField inputField;
+    [SerializeField] private Button Send;
     [SerializeField] private Client networkClient;
+    [SerializeField] private GameObject FormComment;
+    private Dictionary<long, MessageItemUI> commentViews = new Dictionary<long, MessageItemUI>();
+    private Dictionary<long, int> votedMessages = new();
 
-    public static ChatUIManager Instance { get; private set; }
-    public GameObject currentReplyTarget = null;
-
-    private readonly List<Message> messageList = new();
-    private readonly List<List<GameObject>> replyObjects = new();
-    private Dictionary<string, int> votedMessages = new();
-    private Dictionary<string, bool> repliesVisibility = new();
-    private int currentIndex = 0;
-    private string currentLevelName = "";
 
     private void Start()
     {
-        Comment.text = "Leave your review";
-        Instance = this;
-        sendMessageButton.onClick.AddListener(OnSendMessageButtonClick);
-
+        Send.onClick.AddListener(SendComment);
     }
 
-    public void SetMessages(Dictionary<string, Message> messagesDict, string levelName)
+    public void AddComment(CommentSchema comment, string levelName = "", float indent = 10f)
     {
-        currentLevelName = levelName;
-        levelText.text = $"Room {levelName}";
-
-        messageList.Clear();
-        replyObjects.Clear();
-
-        messageList.AddRange(messagesDict.Values);
-        SortMessagesByVote(messageList);
-
-        currentIndex = 0;
-        ShowNextMessages();
-    }
-
-    private void ShowNextMessages()
-    {
-        for (int i = currentIndex; i < messageList.Count; i++)
+        if (commentViews.ContainsKey((comment.id)))
         {
-            var msg = messageList[i];
-            GameObject msgGO = CreateMessageItem(msg,messageItemPrefab);
-            AddVoteHandlers(msg, msgGO);
-
-            var repliesUI = new List<GameObject>();
-            if (msg.replies.Count > 0)
-            {
-                SortMessagesByVote(msg.replies);
-                foreach (var reply in msg.replies)
-                {
-                    GameObject replyGO = CreateMessageItem(reply, relayMessageItemPrefab);
-                    AddVoteHandlers(reply, replyGO);
-                    replyGO.SetActive(repliesVisibility.TryGetValue(msg.id, out bool visible) && visible);
-                    repliesUI.Add(replyGO);
-                }
-            }
-
-            replyObjects.Add(repliesUI);
-            var msgUI = msgGO.GetComponent<MessageItemUI>();
-
-            msgUI.replyButton.onClick.AddListener(() =>
-            {
-                sendMessageButton.onClick.RemoveAllListeners();
-                FormReply.SetActive(true);
-                Comment.text = $"Replying to {msg.sender} ";
-                sendMessageButton.onClick.AddListener(() =>
-                {
-                    if (msgUI != null)
-                    {
-                        OnSendRelayMessageButtonClick(msgUI.gameObject);
-                    }
-                });
-            });
-
-            msgUI.RepliesCount.text = msg.replies.Count.ToString();
-            int capturedIndex = i;
-            msgUI.repliesButton.onClick.AddListener(() => ToggleReplies(capturedIndex));
-        }
-    }
-
-    private GameObject CreateMessageItem(Message msg, GameObject prefab)
-    {
-        GameObject item = Instantiate(prefab, messageContainer);
-        item.GetComponent<MessageItemUI>().Setup(msg, currentLevelName);
-        return item;
-    }
-
-    private void AddVoteHandlers(Message msg, GameObject go)
-    {
-        var itemUI = go.GetComponent<MessageItemUI>();
-
-        void UpdateVoteUI()
-        {
-            Image upImg = itemUI.UpVote.GetComponent<Image>();
-            Image downImg = itemUI.DownVote.GetComponent<Image>();
-            Image frame = itemUI.UpVote.transform.parent.GetComponent<Image>();
-
-            upImg.color = Color.white;
-            downImg.color = Color.white;
-            itemUI.VoteCount.color = itemUI._isItem ? Color.black : itemUI.VoteCount.color;
-
-            if (votedMessages.TryGetValue(msg.id, out int vote))
-            {
-                if (vote == 1)
-                {
-                    upImg.color = Color.blue;
-                    if (itemUI._isItem)
-                    {
-                        frame.color = Color.blue;
-                        itemUI.VoteCount.color = Color.white;
-                    }
-                }
-                else if (vote == -1)
-                {
-                    downImg.color = Color.red;
-                    if (itemUI._isItem)
-                    {
-                        frame.color = Color.red;
-                        itemUI.VoteCount.color = Color.white;
-                    }
-                }
-            }
+            Debug.Log($"Comment {comment.id} đã tồn tại, bỏ qua thêm mới.");
+            return;
         }
 
-        itemUI.UpVote.onClick.AddListener(() =>
+        Debug.Log($"Thêm comment mới với ID: {comment.id}");
+        GameObject newGO = Instantiate(commentPrefab, commentContainer);
+        MessageItemUI itemUI = newGO.GetComponent<MessageItemUI>();
+
+        commentViews[comment.id] = itemUI;
+
+        itemUI.upVoteButton.onClick.AddListener(async () =>
         {
-            int currentVote = votedMessages.ContainsKey(msg.id) ? votedMessages[msg.id] : 0;
+            int currentVote = votedMessages.ContainsKey(comment.id) ? votedMessages[comment.id] : 0;
 
             if (currentVote == 1)
             {
-                // Bỏ upvote
-                msg.votes--;
-                networkClient.SendVote(msg.id, false);
-                votedMessages.Remove(msg.id);
+                comment.likes--;
+                await networkClient.SendVote(comment.id, "unlike");
+                votedMessages.Remove(comment.id);
             }
             else
             {
                 if (currentVote == -1)
                 {
-                    // Gỡ downvote trước
-                    msg.votes++;
-                    networkClient.SendVote(msg.id, true);
+                    comment.dislikes--;
+                    await networkClient.SendVote(comment.id, "undislike");
                 }
 
-                // Áp dụng upvote
-                msg.votes++;
-                networkClient.SendVote(msg.id, true);
-                votedMessages[msg.id] = 1;
+                comment.likes++;
+                await networkClient.SendVote(comment.id, "like");
+                votedMessages[comment.id] = 1;
             }
 
-            RedrawMessages();
+            itemUI.UpdateComment(comment);
+            UpdateVoteColor(comment, itemUI);
         });
 
-        itemUI.DownVote.onClick.AddListener(() =>
+
+        itemUI.downVoteButton.onClick.AddListener(async () =>
         {
-            int currentVote = votedMessages.ContainsKey(msg.id) ? votedMessages[msg.id] : 0;
+            int currentVote = votedMessages.ContainsKey(comment.id) ? votedMessages[comment.id] : 0;
 
             if (currentVote == -1)
             {
-                // Bỏ downvote
-                msg.votes++;
-                networkClient.SendVote(msg.id, true);
-                votedMessages.Remove(msg.id);
+                comment.dislikes--;
+                await networkClient.SendVote(comment.id, "undislike");
+                votedMessages.Remove(comment.id);
             }
             else
             {
                 if (currentVote == 1)
                 {
-                    // Gỡ upvote trước
-                    msg.votes--;
-                    networkClient.SendVote(msg.id, false);
+                    comment.likes--;
+                    await networkClient.SendVote(comment.id, "unlike");
                 }
 
-                // Áp dụng downvote
-                msg.votes--;
-                networkClient.SendVote(msg.id, false);
-                votedMessages[msg.id] = -1;
+                comment.dislikes++;
+                await networkClient.SendVote(comment.id, "dislike");
+                votedMessages[comment.id] = -1;
             }
 
-            RedrawMessages();
+            itemUI.UpdateComment(comment);
+            UpdateVoteColor(comment, itemUI);
         });
 
-        UpdateVoteUI();
+
+        itemUI.UpdateComment(comment);
+
+    }
+    private void UpdateVoteColor(CommentSchema comment, MessageItemUI itemUI)
+    {
+        Image upImg = itemUI.upVoteButton.GetComponent<Image>();
+        Image downImg = itemUI.downVoteButton.GetComponent<Image>();
+        Image frame = itemUI.voteImage.GetComponent<Image>();
+
+        upImg.color = Color.white;
+        downImg.color = Color.white;
+
+
+        if (votedMessages.TryGetValue(comment.id, out int vote))
+        {
+            if (vote == 1)
+            {
+                upImg.color = Color.blue;            
+                    frame.color = Color.blue;
+                    itemUI.CountlikesText.color = Color.white;
+
+            }
+            else if (vote == -1)
+            {
+                downImg.color = Color.red;
+
+                    frame.color = Color.red;
+                    itemUI.CountlikesText.color = Color.white;
+                
+            }
+        }
     }
 
-    private void ToggleReplies(int index)
+    private void SendComment()
     {
-        if (index >= replyObjects.Count) return;
-
-        bool isActive = replyObjects[index].Count > 0 && replyObjects[index][0].activeSelf;
-
-        foreach (var reply in replyObjects[index])
+        Debug.Log("SendComment được gọi");
+        string commentText = inputField.text.Trim();
+        if (string.IsNullOrEmpty(commentText))
         {
-            reply.SetActive(!isActive);
+            Debug.LogWarning("Không thể gửi bình luận trống.");
+            return;
         }
 
-        repliesVisibility[messageList[index].id] = !isActive;
-    }
-
-    private void SortMessagesByVote(List<Message> list)
-    {
-        list.Sort((a, b) => b.votes.CompareTo(a.votes));
-    }
-    public void CloseComment()
-    {
-        FormReply.SetActive(false);
-        sendMessageButton.onClick.RemoveAllListeners();
-        sendMessageButton.onClick.AddListener(OnSendMessageButtonClick);
-        chatInputField.text = "";
-        EmojiManager.Instance.KeyboardButton();
-        Comment.text = "Leave your review";
-
-    }
-    private void RedrawMessages()
-    {
-        foreach (Transform child in messageContainer)
+        networkClient.SendChatMessage(commentText);
+     
+        HideFormComment();
+        CommentSchema newComment = new CommentSchema
         {
-            Destroy(child.gameObject);
-        }
-
-        SortMessagesByVote(messageList);
-        currentIndex = 0;
-        replyObjects.Clear();
-        ShowNextMessages();
+            id = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), // tạm dùng timestamp làm id
+            relationType = "comment",
+            relationId = 0,
+            parentId = 0,
+            detail = commentText,
+            replies = 0,
+            likes = 0,
+            dislikes = 0,
+            createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            updatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            account = new AccountSchema
+            {
+                id = networkClient.id,
+                name = networkClient.name,
+                thumbnail = networkClient.thumbnail,
+            },
+            parent = null
+        };
+        Debug.Log("Gửi nội dung: " + commentText + ", ID: " + newComment.id);
+        inputField.text = string.Empty; 
+        AddComment(newComment, networkClient.level);
     }
 
-    public void AddNewMessage(Message msg)
+    public void UpdateComment(CommentSchema comment)
     {
-        if (string.IsNullOrEmpty(msg.parentId))
+        if (commentViews.TryGetValue(comment.id, out MessageItemUI itemUI))
         {
-            messageList.Add(msg);
-            SortMessagesByVote(messageList);
-            RedrawMessages();
+            itemUI.UpdateComment(comment);
         }
         else
         {
-            var parent = messageList.Find(m => m.id == msg.parentId);
-            if (parent != null)
-            {
-                parent.replies.Add(msg);
-                SortMessagesByVote(parent.replies);
-                RedrawMessages();
-            }
+            Debug.LogWarning($"Không tìm thấy comment ID {comment.id} để cập nhật.");
         }
     }
 
-    public void UpdateMessage(Message updatedMsg)
+    public void ShowFormComment()
     {
-        if (string.IsNullOrEmpty(updatedMsg.parentId))
-        {
-            int index = messageList.FindIndex(m => m.id == updatedMsg.id);
-            if (index >= 0)
-            {
-                messageList[index].votes = updatedMsg.votes;
-                SortMessagesByVote(messageList);
-                RedrawMessages();
-            }
-        }
-        else
-        {
-            var parent = messageList.Find(m => m.id == updatedMsg.parentId);
-            if (parent != null)
-            {
-                int replyIndex = parent.replies.FindIndex(r => r.id == updatedMsg.id);
-                if (replyIndex >= 0)
-                {
-                    parent.replies[replyIndex].votes = updatedMsg.votes;
-                    SortMessagesByVote(parent.replies);
-                    RedrawMessages();
-                }
-            }
-        }
+        FormComment.SetActive(true);
+        inputField.ActivateInputField();
     }
-
-    private async void OnSendRelayMessageButtonClick(GameObject go)
+    public void HideFormComment()
     {
-        Debug.Log("Send relay message button clicked");
-        if (!string.IsNullOrEmpty(chatInputField.text))
-        {
-            string content = chatInputField.text;
-            chatInputField.text = "";
-
-            string parentId = go.GetComponent<MessageItemUI>().messageId;
-            await networkClient.SendChatMessage(content, parentId);
-
-            sendMessageButton.onClick.AddListener(OnSendMessageButtonClick);
-            EmojiManager.Instance.KeyboardButton();
-            chatInputField.transform.parent.gameObject.SetActive(false);
-
-        }
-    }
-
-    private async void OnSendMessageButtonClick()
-    {
-        if (!string.IsNullOrEmpty(chatInputField.text))
-        {
-            string content = chatInputField.text;
-            chatInputField.text = "";
-            await networkClient.SendChatMessage(content);
-        }
-        chatInputField.transform.parent.gameObject.SetActive(false);
-        EmojiManager.Instance.KeyboardButton();
-        Canvas.ForceUpdateCanvases();
-        messageContainer.parent.parent.GetComponent<ScrollRect>().verticalNormalizedPosition = -1f;
-        Canvas.ForceUpdateCanvases();
-
-    }
-    public void Show()
-    {
-
-        chatInputField.transform.parent.gameObject.SetActive(true);
-        EmojiManager.Instance.KeyboardButton();
-        chatInputField.ActivateInputField();
-    }
-    public void Close()
-    {
-        messageContainer.transform.parent.parent.parent.gameObject.SetActive(false);
+        FormComment.SetActive(false);
     }
 }
